@@ -1,0 +1,90 @@
+name: Build StreamX Media3 Pro v13.0 Single Release APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 2. Extract Project ZIP Automatically
+        run: |
+          shopt -s nullglob
+          for z in *.zip; do
+            echo "Extracting $z..."
+            unzip -o "$z"
+          done
+          for z in *v13*.zip *4D*.zip *Glossy*.zip; do
+            if [ -f "$z" ]; then
+              echo "Applying latest ZIP: $z"
+              unzip -o "$z"
+            fi
+          done
+          if [ -d "iptv_media3_pro_android_tv" ]; then
+            cp -rf iptv_media3_pro_android_tv/. .
+          fi
+          test -f settings.gradle.kts
+          test -f app/build.gradle.kts
+
+      - name: 3. Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 4. Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: 5. Ensure Android Signing Key Exists
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -v \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: 6. Verify Project Structure & Unit Tests
+        run: |
+          python3 scripts/verify_project.py
+          gradle testDebugUnitTest --stacktrace
+
+      - name: 7. Compile ONLY Final Signed Release APK
+        run: |
+          rm -rf app/build/outputs/apk
+          gradle assembleRelease -x lint -x lintVitalRelease --stacktrace
+
+      - name: 8. Verify Single Signed Release APK
+        run: |
+          RELEASE_APK="app/build/outputs/apk/release/app-release.apk"
+          if [ ! -s "$RELEASE_APK" ]; then
+            echo "ERROR: Signed app-release.apk was not generated!"
+            find app/build/outputs/apk -type f || true
+            exit 1
+          fi
+          unzip -t "$RELEASE_APK" > /dev/null
+          mkdir -p single_release_out
+          cp "$RELEASE_APK" single_release_out/StreamX-Media3-Pro-v13.0-4DGlossy-Release.apk
+          ls -lh single_release_out/
+          sha256sum single_release_out/StreamX-Media3-Pro-v13.0-4DGlossy-Release.apk
+
+      - name: 9. Upload Single Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamX-Media3-Pro-v13.0-4DGlossy-Single-Release
+          path: single_release_out/StreamX-Media3-Pro-v13.0-4DGlossy-Release.apk
+          if-no-files-found: error
+          
